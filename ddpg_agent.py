@@ -4,6 +4,9 @@ import copy
 from collections import namedtuple, deque
 
 from model import Actor, Critic
+from prioritized_memory import Memory
+
+
 
 import torch
 import torch.nn.functional as F
@@ -50,63 +53,33 @@ class Agent():
         self.Batch_size = Batch_size
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, random_seed)
+        #self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, random_seed)
+        self.memory = Memory(action_size, BUFFER_SIZE, self.Batch_size, GAMMA, random_seed) 
         self.t_step = 0
         self.Learning_Rate = Learning_Rate
         self.N_Bootstrap=N_Bootstrap
         
-        self.gamma_pot = [GAMMA**i for i in range(N_Bootstrap)]
-    
-    
-    ## bootstrap extra stuff
-    def sample_sequences(self, length_seq , k_seq, memory):
-      
-        length_mem = len(memory)
-        liste = [ list(itertools.islice(memory, k, k+length_seq)) for k in random.sample(range(length_mem), k_seq) 
-                                                                                        if (k+length_seq<length_mem)]
-        return liste
-
-
-    def adapt_sample_for_n_bootstrap(self, sample, gamma=0.99):
-        experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
-        if any([element.done for element in sample]):
-            return None   # TODO: to be adapted
-        else:
-            state = sample[0].state
-            action = sample[0].action
-            done = sample[0].done
-            next_state = sample[0].next_state #  sample[-1].next_state
-            reward_summed = sum([exp.reward*self.gamma_pot[j] for j,exp in enumerate(sample)])
-            e = experience(state, action,  reward_summed,next_state, done)
-            return e
-
-    def sample_bootstrap(self,length_seq , k_seq, memory, gamma=0.99):
-        liste=self.sample_sequences(length_seq , k_seq, memory)
-        experiences = [self.adapt_sample_for_n_bootstrap(element, gamma) for element in liste]
-        #print (np.shape(new_samples))
-        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
-        return [states, actions, rewards, next_states, dones]
-    
-    ######################### 
     
     
     def step(self, state, action, reward, next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
         # Save experience / reward
         self.t_step = (self.t_step+1) % self.Learning_Rate
-        self.memory.add(state, action, reward, next_state, done)
+        
+        action_next = self.actor_target([next_state])
+        Q_target_next = self.critic_target([next_state], [action_next])
+        Q_target = reward + (gamma * Q_target_next * (1 - done))
+        Q_expected = self.critic_local([state], [action])
+      
+        self.memory.add(state, action, reward, next_state, done, np.abs(Q_targets - Q_expected))
         if self.t_step == 0:
         # Learn, if enough samples are available in memory
             if len(self.memory) > self.Batch_size:
                 if self.N_Bootstrap<2:
-                    experiences = self.memory.sample()
+                    experiences, indices, is_weights = self.memory.sample()
                 else:
-                    experiences = self.sample_bootstrap(self.N_Bootstrap , self.Batch_size, self.memory.memory, GAMMA)
-                self.learn(experiences, GAMMA)
+                    experiences,indices, is_weights = self.memory.sample_bootstrap(self.N_Bootstrap , self.Batch_size, self.memory.memory, GAMMA)
+                self.learn(experiences,indices, probs, GAMMA)
 
     def act(self, state, reduction=1., add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -124,7 +97,7 @@ class Agent():
     def reset(self):
         self.noise.reset()
 
-    def learn(self, experiences, gamma):
+    def learn(self, experiences, indices, is_weights, gamma):
         """Update policy and value parameters using given batch of experience tuples.
         Q_targets = r + γ * critic_target(next_state, actor_target(next_state))
         where:
@@ -146,8 +119,10 @@ class Agent():
         Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
         # Compute critic loss
         Q_expected = self.critic_local(states, actions)
-        critic_loss = F.mse_loss(Q_expected, Q_targets)
-        print (critic_loss)
+        # update prios
+        new_deltas = np.abs(Q_targets - Q_expected)
+        memory.update_prios(indices, new_deltas)      
+        critic_loss = torch.FloatTensor(is_weights) * F.mse_loss(Q_expected, Q_targets) 
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -214,12 +189,12 @@ class ReplayBuffer:
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  # internal memory (deque)
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done", "prio"])
         self.seed = random.seed(seed)
     
-    def add(self, state, action, reward, next_state, done):
+    def add(self, state, action, reward, next_state, done, prio):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
+        e = self.experience(state, action, reward, next_state, done, prio)
         self.memory.append(e)
     
     def sample(self):
@@ -231,8 +206,9 @@ class ReplayBuffer:
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
+        prio = torch.from_numpy(np.vstack([e.prio for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
 
-        return (states, actions, rewards, next_states, dones)
+        return (states, actions, rewards, next_states, dones, prios)
 
     def __len__(self):
         """Return the current size of internal memory."""
