@@ -15,8 +15,8 @@ import itertools
 
 BUFFER_SIZE = int(1e6)  # replay buffer size
 #BATCH_SIZE = 128        # minibatch size
-GAMMA = 0.99            # discount factor
-TAU = 1e-3              # for soft update of target parameters
+GAMMA = 0.1#99            # discount factor
+TAU = 1e-3          # for soft update of target parameters
 LR_ACTOR = 1e-4         # learning rate of the actor 
 LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
@@ -26,7 +26,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class Agent():
     """Interacts with and learns from the environment."""
     
-    def __init__(self,state_size, action_size, random_seed,Batch_size=None, Learning_Rate=None, N_Bootstrap=1):
+    def __init__(self, state_size, action_size, random_seed,Batch_size=None, Learning_Rate=None, N_Bootstrap=1):
         """Initialize an Agent object.
         
         Params
@@ -58,28 +58,35 @@ class Agent():
         self.t_step = 0
         self.Learning_Rate = Learning_Rate
         self.N_Bootstrap=N_Bootstrap
-        
-    
-    
+
+
+
     def step(self, state, action, reward, next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
         # Save experience / reward
 
         self.t_step = (self.t_step+1) % self.Learning_Rate
-        print (len(next_state))
-        action_next = self.actor_target(torch.FloatTensor([next_state]))
-        Q_target_next = self.critic_target(torch.FloatTensor([next_state]), torch.FloatTensor([action_next]))
-        Q_target = reward + (gamma * Q_target_next * (1 - done))
-        Q_expected = self.critic_local(torch.FloatTensor([state]), torch.FloatTensor([action]))
-      
-        self.memory.add(state, action, reward, next_state, done, np.abs(Q_target - Q_expected))
+        next_state = torch.FloatTensor([next_state])# torch.from_numpy(np.asarray(next_state)).float().to(device)
+        state = torch.FloatTensor([state])#   torch.from_numpy(np.asarray(state)).float().to(device)
+        action = torch.FloatTensor([action])   #torch.from_numpy(np.asarray(action)).float().to(device)
+        action_next = self.actor_target(next_state)
+        Q_target_next = self.critic_target(next_state, action_next)
+        Q_target = reward + (GAMMA * Q_target_next.cpu().data.numpy()* (1 - done) )
+        Q_expected = self.critic_local(state, action).cpu().data.numpy()
+        self.memory.add(state, action, reward, next_state, done, np.abs(Q_target - Q_expected)[0][0], BUFFER_SIZE)
+        #if (reward > 0):
+        #    print (self.t_step)
+        #    print (reward)
+        #    print (np.abs(Q_target - Q_expected)[0][0])
+        #    print (self.memory.prios[-1])
+        #    print ("next")
         if self.t_step == 0:
             if len(self.memory) > self.Batch_size:
                 if self.N_Bootstrap < 2:
                     experiences, indices, is_weights = self.memory.sample()
                 else:
-                    experiences, indices, is_weights = self.memory.sample_bootstrap(self.N_Bootstrap, self.Batch_size, self.memory.memory, GAMMA)
-                self.learn(experiences,indices, probs, GAMMA)
+                    experiences, indices, is_weights = self.memory.sample_bootstrap(self.N_Bootstrap)
+                self.learn(experiences, indices, is_weights, GAMMA)
 
     def act(self, state, reduction=1., add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -115,13 +122,26 @@ class Agent():
         actions_next = self.actor_target(next_states)
         Q_targets_next = self.critic_target(next_states, actions_next)
         # Compute Q targets for current states (y_i)
-        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+
+        Q_targets = rewards + (gamma * Q_targets_next *(1 - dones))#
         # Compute critic loss
         Q_expected = self.critic_local(states, actions)
         # update prios
-        new_deltas = np.abs(Q_targets - Q_expected)
-        memory.update_prios(indices, new_deltas)      
-        critic_loss = torch.FloatTensor(is_weights) * F.mse_loss(Q_expected, Q_targets)
+
+
+        new_deltas = np.abs(Q_targets.cpu().data.numpy() - Q_expected.cpu().data.numpy())
+        #if(len(rewards.cpu().data.numpy()[rewards.cpu().data.numpy()>0])):
+        #    index = np.where(rewards.cpu().data.numpy()>0)[0][0]
+        #    print ("Hohohohohhohhoh")
+        #    print(Q_targets.cpu().data.numpy()[index])
+        #    print(Q_expected.cpu().data.numpy()[index])
+        #    print (new_deltas[index, 0])
+        self.memory.update_prios(indices, new_deltas[:, 0])
+        #if(len(rewards.cpu().data.numpy()[rewards.cpu().data.numpy()>0])):
+        #    print (self.memory.prios[indices[index]])
+        #    print ("next")
+
+        critic_loss = (torch.FloatTensor(is_weights) * F.mse_loss(Q_expected, Q_targets)).mean()
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -156,7 +176,7 @@ class Agent():
 class OUNoise:
     """Ornstein-Uhlenbeck process."""
 
-    def __init__(self, size, seed, mu=0.,theta=1.15, sigma=1.2):# theta=0.15, sigma=0.2):
+    def __init__(self, size, seed, mu=0.,theta=0.15, sigma=2.3):# theta=0.15, sigma=0.2):
         """Initialize parameters and noise process."""
         self.mu = mu * np.ones(size)
         self.theta = theta
@@ -173,5 +193,5 @@ class OUNoise:
         x = self.state
         dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for i in range(len(x))])
         self.state = x + reduction*dx
-        return self.state
+        return dx #self.state
 

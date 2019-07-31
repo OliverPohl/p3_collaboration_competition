@@ -1,6 +1,11 @@
 import random
 import numpy as np
 from collections import namedtuple
+import torch
+import itertools
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
@@ -12,45 +17,49 @@ class ReplayBuffer:
             buffer_size (int): maximum size of buffer
             batch_size (int): size of each training batch
         """
-        self.prio_epsilon =  .1
+        self.prio_epsilon =  .001
         self.prio_exponent = .6
         self.prio_beta = .6
         self.action_size = action_size
         self.memory = []  
         self.prios = []
         self.batch_size = batch_size
+        self.buffer_size = buffer_size
         self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
         self.gamma_pot = [gamma**i for i in range(N_Bootstrap)]
-    
-    def add(self, state, action, reward, next_state, done, delta):
+
+    def add(self, state, action, reward, next_state, done, delta, buffer_size):
         """Add a new experience to memory."""
         prio = delta + self.prio_epsilon
         e = self.experience(state, action, reward, next_state, done)
         self.memory.append(e)
         self.prios.append(prio)
-        if len(self.memory)>=buffer_size:
+        if len(self.memory) >= buffer_size:
             self.memory.pop(0)
             self.prios.pop(0)
-    
-    def sample(self):
-        """Randomly sample a batch of experiences from memory."""
-        probs = (np.asarray(self.prios)**prio_exponent)/sum(np.asarray(self.prios)**prio_exponent) 
-        indices = [np.random.choice(np.arange(self.batch_size), p=probs) for _ in range(self.batch_size)]
+    def create_indices_and_weights_for_sample(self):
+        probs = (np.asarray(self.prios)**self.prio_exponent)/sum(np.asarray(self.prios)**self.prio_exponent)  # TODO: Maybe do before outside?
+        indices = [np.random.choice(np.arange(len(self.memory)), p=probs) for _ in range(self.batch_size)]
         less_probs = np.asarray(probs)[indices].tolist()
         is_weights = np.power(self.batch_size * less_probs, -self.prio_beta)
         is_weights /= is_weights.max()
+        return(indices, is_weights)
+
+
+    def sample(self):
+        """Randomly sample a batch of experiences from memory."""
+        indices, is_weights = self.create_indices_and_weights_for_sample()
         experiences = [self.memory[idx] for idx in indices]
         states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
-
         return [states, actions, rewards, next_states, dones], indices, is_weights
 
     def update_prios(self, indices, new_deltas):
-        new = np.array(self.prios)+self.prio_epsilon
+        new = np.array(self.prios)
         new[indices] = new_deltas +self.prio_epsilon
         self.prios = new.tolist()
     
@@ -59,42 +68,43 @@ class ReplayBuffer:
         return len(self.memory)
 
 
+    ## bootstrap sampling, i.e. using more reward information along trajectory
+    def sample_sequences(self, length_seq, indices):
+        length_mem = len(self.memory)
+        new_indices = [k for k in indices if (k+length_seq < length_mem)]
+        liste = [list(itertools.islice(self.memory, int(k), int(k+length_seq), 2)) for k in new_indices ]
+        return liste, new_indices
 
 
-    ## TODO!
-
-    ## bootstrap extra stuff
-    def sample_sequences(self, length_seq , k_seq, memory):
-      
-        length_mem = len(memory)
-        liste = [ list(itertools.islice(memory, k, k+length_seq)) for k in random.sample(range(length_mem), k_seq) 
-                                                                                        if (k+length_seq<length_mem)]
-        return liste
-
-
-    def adapt_sample_for_n_bootstrap(self, sample, gamma=0.99):
+    def adapt_sample_for_n_bootstrap(self, sample):
         experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
-        if any([element.done for element in sample]):
-            return None   # TODO: to be adapted
-        else:
-            state = sample[0].state
-            action = sample[0].action
-            done = sample[0].done
-            next_state = sample[0].next_state #  sample[-1].next_state
-            reward_summed = sum([exp.reward*self.gamma_pot[j] for j,exp in enumerate(sample)])
-            e = experience(state, action,  reward_summed,next_state, done)
-            return e
+        #if any([element.done for element in sample]):
+        #    return None
+        #else:
+        state = sample[0].state
+        action = sample[0].action
+        done = sample[0].done
+        next_state = sample[0].next_state #  sample[-1].next_state
+        #reward_summed = sum([exp.reward*self.gamma_pot[j] for j,exp in enumerate(sample)])
+        reward_summed = 0
+        for j, exp in enumerate(sample):
+            reward_summed += exp.reward * self.gamma_pot[j]
+            if(exp.done):
+                break
+        reward_summed = reward_summed/(j+1.)
+        e = experience(state, action, reward_summed, next_state, done)
+        return e
 
-    def sample_bootstrap(self,length_seq , k_seq, memory, gamma=0.99):
-        liste=self.sample_sequences(length_seq , k_seq, memory)
-        experiences = [self.adapt_sample_for_n_bootstrap(element, gamma) for element in liste]
-        #print (np.shape(new_samples))
+    def sample_bootstrap(self, length_seq):
+        indices, is_weights = self.create_indices_and_weights_for_sample()
+        liste, new_indices = self.sample_sequences(length_seq, indices)
+        experiences = [self.adapt_sample_for_n_bootstrap(element) for element in liste]
         states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
-        return [states, actions, rewards, next_states, dones], indices, probs
+        return [states, actions, rewards, next_states, dones], new_indices, is_weights
 
 
 class StandardReplayBuffer:
@@ -130,7 +140,7 @@ class StandardReplayBuffer:
             device)
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(
             device)
-        prio = torch.from_numpy(np.vstack([e.prio for e in experiences if e is not None]).astype(np.uint8)).float().to(
+        prios = torch.from_numpy(np.vstack([e.prio for e in experiences if e is not None]).astype(np.uint8)).float().to(
             device)
 
         return (states, actions, rewards, next_states, dones, prios)
