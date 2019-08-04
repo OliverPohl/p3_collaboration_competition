@@ -72,11 +72,11 @@ class ReplayBuffer:
     def sample_sequences(self, length_seq, indices):
         length_mem = len(self.memory)
         new_indices = [k for k in indices if (k+length_seq < length_mem)]
-        liste = [list(itertools.islice(self.memory, int(k), int(k+length_seq), 2)) for k in new_indices ]
+        liste = [list(itertools.islice(self.memory, int(k), int(k+length_seq), 2)) for k in new_indices ] # ), 2)) for
         return liste, new_indices
 
 
-    def adapt_sample_for_n_bootstrap(self, sample):
+    def adapt_sample_for_n_bootstrap(self, sample, reward_scale=1):
         experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         #if any([element.done for element in sample]):
         #    return None
@@ -89,16 +89,14 @@ class ReplayBuffer:
         reward_summed = 0
         for j, exp in enumerate(sample):
             reward_summed += exp.reward * self.gamma_pot[j]
-            if(exp.done):
-                break
-        reward_summed = reward_summed/(j+1.)
+        reward_summed = reward_scale*reward_summed/(j+1.)
         e = experience(state, action, reward_summed, next_state, done)
         return e
 
     def sample_bootstrap(self, length_seq):
         indices, is_weights = self.create_indices_and_weights_for_sample()
         liste, new_indices = self.sample_sequences(length_seq, indices)
-        experiences = [self.adapt_sample_for_n_bootstrap(element) for element in liste]
+        experiences = [self.adapt_sample_for_n_bootstrap(element, length_seq*0.5) for element in liste]  #length_seq*0.5
         states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)

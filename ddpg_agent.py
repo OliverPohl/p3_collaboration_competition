@@ -13,12 +13,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 import itertools
 
-BUFFER_SIZE = int(1e6)  # replay buffer size
+BUFFER_SIZE = int(1e5)  # replay buffer size
 #BATCH_SIZE = 128        # minibatch size
-GAMMA = 0.1#99            # discount factor
 TAU = 1e-3          # for soft update of target parameters
-LR_ACTOR = 1e-4         # learning rate of the actor 
-LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -26,7 +23,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class Agent():
     """Interacts with and learns from the environment."""
     
-    def __init__(self, state_size, action_size, random_seed,Batch_size=None, Learning_Rate=None, N_Bootstrap=1):
+    def __init__(self, state_size, action_size, random_seed,Batch_size=None, Learning_Rate=None, N_Bootstrap=1, LR_actor=1e-4, LR_critic=1e-3, gamma=0.99, theta=.2, sigma=1. ):
         """Initialize an Agent object.
         
         Params
@@ -41,23 +38,25 @@ class Agent():
         # Actor Network (w/ Target Network)
         self.actor_local = Actor(state_size, action_size, random_seed).to(device)
         self.actor_target = Actor(state_size, action_size, random_seed).to(device)
-        self.actor_optimizer = optim.Adam(self.actor_local.parameters(), lr=LR_ACTOR)
+        self.actor_optimizer = optim.Adam(self.actor_local.parameters(), lr=LR_actor)
 
         # Critic Network (w/ Target Network)
         self.critic_local = Critic(state_size, action_size, random_seed).to(device)
         self.critic_target = Critic(state_size, action_size, random_seed).to(device)
-        self.critic_optimizer = optim.Adam(self.critic_local.parameters(), lr=LR_CRITIC, weight_decay=WEIGHT_DECAY)
+        self.critic_optimizer = optim.Adam(self.critic_local.parameters(), lr=LR_critic, weight_decay=WEIGHT_DECAY)
 
         # Noise process
-        self.noise = OUNoise(action_size, random_seed)
+        self.noise = OUNoise(action_size, random_seed, theta, sigma)
         self.Batch_size = Batch_size
 
         # Replay memory
         #self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, random_seed)
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, GAMMA, random_seed, N_Bootstrap)
+        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, gamma, random_seed, N_Bootstrap)
         self.t_step = 0
         self.Learning_Rate = Learning_Rate
-        self.N_Bootstrap=N_Bootstrap
+        self.N_Bootstrap = N_Bootstrap
+
+        self.gamma = gamma
 
 
 
@@ -71,9 +70,13 @@ class Agent():
         action = torch.FloatTensor([action])   #torch.from_numpy(np.asarray(action)).float().to(device)
         action_next = self.actor_target(next_state)
         Q_target_next = self.critic_target(next_state, action_next)
-        Q_target = reward + (GAMMA * Q_target_next.cpu().data.numpy()* (1 - done) )
+        Q_target = reward + (self.gamma * Q_target_next.cpu().data.numpy()*(1 - done))
         Q_expected = self.critic_local(state, action).cpu().data.numpy()
         self.memory.add(state, action, reward, next_state, done, np.abs(Q_target - Q_expected)[0][0], BUFFER_SIZE)
+        #print(np.abs(Q_target - Q_expected)[0][0])
+        #if (max(np.abs(Q_target - Q_expected)[0][0])>1):
+        #    print (Q_target)
+        #    print (Q_expected)
         #if (reward > 0):
         #    print (self.t_step)
         #    print (reward)
@@ -86,7 +89,7 @@ class Agent():
                     experiences, indices, is_weights = self.memory.sample()
                 else:
                     experiences, indices, is_weights = self.memory.sample_bootstrap(self.N_Bootstrap)
-                self.learn(experiences, indices, is_weights, GAMMA)
+                self.learn(experiences, indices, is_weights)
 
     def act(self, state, reduction=1., add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -103,7 +106,7 @@ class Agent():
     def reset(self):
         self.noise.reset()
 
-    def learn(self, experiences, indices, is_weights, gamma):
+    def learn(self, experiences, indices, is_weights):
         """Update policy and value parameters using given batch of experience tuples.
         Q_targets = r + γ * critic_target(next_state, actor_target(next_state))
         where:
@@ -123,7 +126,7 @@ class Agent():
         Q_targets_next = self.critic_target(next_states, actions_next)
         # Compute Q targets for current states (y_i)
 
-        Q_targets = rewards + (gamma * Q_targets_next *(1 - dones))#
+        Q_targets = rewards + (self.gamma * Q_targets_next *(1 - dones))#
         # Compute critic loss
         Q_expected = self.critic_local(states, actions)
         # update prios
@@ -176,7 +179,7 @@ class Agent():
 class OUNoise:
     """Ornstein-Uhlenbeck process."""
 
-    def __init__(self, size, seed, mu=0.,theta=0.15, sigma=2.3):# theta=0.15, sigma=0.2):
+    def __init__(self, size, seed, mu=0., theta=0.15, sigma=3.0):# theta=0.15, sigma=0.2):
         """Initialize parameters and noise process."""
         self.mu = mu * np.ones(size)
         self.theta = theta
@@ -193,5 +196,5 @@ class OUNoise:
         x = self.state
         dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for i in range(len(x))])
         self.state = x + reduction*dx
-        return dx #self.state
+        return self.state
 
