@@ -1,4 +1,4 @@
-# Deep reinforcement learning: Collaboration and Competition
+# Report of Deep reinforcement learning: Solving the UnityEnvironment Tennis
 
 ### Introduction
 The repository contains the third and final project of the Udacity Deep Reinforcement Learning Nanodegree.
@@ -7,7 +7,7 @@ For this project, the [Tennis](https://github.com/Unity-Technologies/ml-agents/b
 
 It is solved by the DDPG algorithm enhanced by bootstrap and priorized replay methods. This enables solving the environment in less than 200 episodes.
 
-![Trained Agent][image1]
+
 
 ### Environment
 In this environment, two agents control rackets to bounce a ball over a net. If an agent hits the ball over the net, it receives a reward of +0.1.  If an agent lets a ball hit the ground or hits the ball out of bounds, it receives a reward of -0.01.  Thus, the goal of each agent is to keep the ball in play.
@@ -28,9 +28,9 @@ In addition, you may want to install [Unity ML-A](https://github.com/Unity-Techn
 
 For this project, the environment can be loaded for each operating system:
 
-Linux: [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis_Linux.zip)
-Mac OSX: [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis.app.zip)
-Windows (32-bit): [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis_Windows_x86.zip)
+Linux: [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis_Linux.zip)\
+Mac OSX: [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis.app.zip)\
+Windows (32-bit): [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis_Windows_x86.zip)\
 Windows (64-bit): [click here](https://s3-us-west-1.amazonaws.com/udacity-drlnd/P3/Tennis/Tennis_Windows_x86_64.zip)
 
 Then, place the file in the p3_collab-compet/ folder in the DRLND GitHub repository, and unzip (or decompress) the file.
@@ -43,6 +43,7 @@ Finally, clone model.py, priorized_memory.py, ddpg.py and the Tennis.ipynb into 
 
 
 ### Instructions
+
 Just follow the Tennis.ipynb notebook. 
 
 

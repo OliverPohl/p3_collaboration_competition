@@ -1,15 +1,13 @@
-# Deep reinforcement learning: Collaboration and Competition
+# Report of Deep reinforcement learning: Solving the UnityEnvironment Tennis
 
 ### Introduction
 The repository contains the third and final project of the Udacity Deep Reinforcement Learning Nanodegree.
 
 For this project, the [Tennis](https://github.com/Unity-Technologies/ml-agents/blob/master/docs/Learning-Environment-Examples.md#tennis) environment is used.
 
-It is solved by the DDPG algorithm enhanced by bootstrap and priorized replay methods. This enables solving the environment in less than 200 episodes. The algorithm shall be explained in the following.
+It is solved by the DDPG algorithm enhanced by bootstrap and priorized replay methods. This way the environment is solved in less than 200 episodes. Note, that the algorithm is optimized to solve the environment in the collaboration scenario.
+The algorithm shall be explained in the following.
 
-
-
-![Trained Agent][image1]
 
 ### Environment
 In this environment, two agents control rackets to bounce a ball over a net. If an agent hits the ball over the net, it receives a reward of +0.1.  If an agent lets a ball hit the ground or hits the ball out of bounds, it receives a reward of -0.01.  Thus, the goal of each agent is to keep the ball in play.
@@ -23,55 +21,57 @@ The task is episodic, and in order to solve the environment, your agents must ge
 
 The environment is considered solved, when the average (over 100 episodes) of those **scores** is at least +0.5.
 
-### Methods
+### DDPG Algorithm
 
-- Tennis.ipynb
-def ddpg:
-	Input:
-		env - Tennis environment
-		agents - 2 Agents which have to be defined before
-		n_episodes - 500 - Number of episodes
-		Batch_size - 128 - batch size for learning 
-		N_Bootstrap - 4 - Depth of bootstrapping
-		seed - 0 - seed for noise, weights initializing and sampling mini batches
-	Output: 
-		scores
-		trained agents
+The Tennis environment has a continuous action space. One reinforcement algorithm being capable to output continious actions is DDPG - Deep Deterministic Policy Gradient. The DDPG algorithm (defined in **ddpg_agent.py**) uses an actor and a critic function, which are represented by neuronal networks defined in **model.py**.
+Using this, the learning recursing flow is as follows (see **Tennis.ipynb**):
 
-- agent.py
+1. Define action based on last state using the actor and add some noise on it
+2. Run the environment to obtain next state, reward and done (epsiode closed or not)
+3. Add [action, state, next_state, reward, done] tuple to the memory (**priorized_memory.py**)
+4. Teach the critic function (after every "Learning_Rate" step) 
 
-	class agent
-		Input:
-			Learning_Rate - 4 - how many steps until learning
-			LR_actor - 10^-3 - learning rate actor network
-			LR_critic - 10^-3 - learning rate critic network 
-			gamma - 0.99 - decay rate 
-			theta, sigma - 0.15, 0.2 - for OU noise
-			prio_exponent, prio_beta, prio_epsilon - 0.8, 0.8, 0.001 - for priorized replay
-		def step:
-			Takes new experiences, stores their priorization and intiates learning.
-		def act:
-			Uses actor network to extract action given a state. Uses noise.
-		def learn:
-				First the critic is updated using minibatches of experiences. As in DQN,  Q_target values are calculated using Bellman equation. The mean square losses is defined by comparing the latter with the local values of Q(state, action). Using an optimizer scheme (Adam), the information is backpropagated. 
-	For the actor, the target function is just the negative value of the critic - Q(state, action). The mean of these values for all states and actions gets backpropagated into the neural net of the actor. The priorization of experiences, which were used in mini batches, are updated. 
-		def soft_update:
-			Synchronizes local and target networks.
+In the tennis environment there are to players.
+In this implementation each agent is modelled seperately with a DDPG agent object.
+Hence, each agent only considers its own state and action space. This is sufficient knowledge for the collaboration scenario. To train a competing agent it is benificial to know the opponent's strategy. 
+Hence, this implementation is optimized to solve the environment by cooperation. 
 
-	class OUNoise
-		Simulation of an OU process (linear stochastic differential equation). In ddpg_agent it is added to the actions provided by the actor.
+Still, training the agent with two standard DDPG agents does not quite work well. The reason is that (even for humans) it is quite difficult to hit the ball correctly. Hence, very few positive cases emerge and there is nothing the agent can learn from. 
+Bootstrapping as well as priorized replay are methods which optimize the usage of positive experiences, which shall be explained in the following.
 
-- model.py
+### Bootstrapping and priorized replay
+  
+The two methods are mostly defined in **priorized_replay.py**. Priorized replay assigns to each experience a priorization factor p. Next, to sample the mini batch for training a function of p 
+parametrized by some hyperparameters gives the probability distribution for sampling experiences:\
+f(p, prio_exponent, prio_epsilon) = (p+prio_epsilon)^(prio_exponent) / sum_p ((p+prio_epsilon)^(prio_exponent))\
+For bootstrapping, the rewards are recalculated by aggregating the rewards of the following "N_Bootstrap" experience sequences. 
+This ensures that actions, which lead to a certain (positive) reward, are immediately rewarded.\
+Please note that in order to combine these two methods, the order of the experiences in the memory needs to be conserved.
 
-	class Actor:
-	Defines a small neuronal network in torch with 4 fully connected layers. 
-	The input layer has the size of the state space, while the output layer has the size of the action space. Hence, for any given state, such a matrix 	returns an action. 
-	After all the layers have dimensions: d_state_space- 256 -128 - d_action_space
+### Parameters
+As in every reinforcement algorithm the results are very sensible on the parameters. Particularly the noise parameters need to be adapted with care. 
+The given setup is surely not yet the optimal one, there is much room for exploration
+Please extract all parameters from the Tennis.ipynb. Here, we just report the most important ones: 
 
-	class Critic
-	Defines a small neural network in “torch” with 4 fully connected layers. 
-	The input layer has the size of the state space, while the output layer has the size 1. The second layer has 400 neurons and the action values. 
-	Hence, for any given state, such a matrix returns an action value for a given action and state.
-	After all the layers have dimensions: d_state_space - 256 +d_action_space - 128 - 1
+n_episodes = 500 - Number of episodes\
+Batch_size = 128 - Batch size for learning\
+N_Bootstrap = 4 - Depth of bootstrapping\
+prio_exponent = 0.8 - Exponent for priorized replay -> the closer to 1, the more priorization\
+LR_actor = 1e-3 - learning rate of the actor\
+LR_critic = 1e-3 - learning rate of the critic\
+theta = .03  - relaxation rate OU process\
+sigma = .04  - standard deviation of Gaussian noise in OU process
+
+### Results
+
+As can be seen in the notebook, the algorithm solves the environment in about 200 episodes, which is faster than with standard DDPG methods. Also, it leads to a high average score > 1.
+On the other hand, the results are not stable. If sufficient positive experience is not made by chance at the beginning, convergence is not guaranteed.
+Here is the result plot for the given parameters with seed = 0:
+
+![Trained Agent](Result.png)
+
+
+
+
 
 
