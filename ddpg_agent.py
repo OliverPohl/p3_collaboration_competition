@@ -14,8 +14,7 @@ import torch.optim as optim
 import itertools
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
-#BATCH_SIZE = 128        # minibatch size
-TAU = 1e-3          # for soft update of target parameters
+TAU = 1e-2   #-3        # for soft update of target parameters
 WEIGHT_DECAY = 0        # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -23,7 +22,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class Agent():
     """Interacts with and learns from the environment."""
     
-    def __init__(self, state_size, action_size, random_seed,Batch_size=None, Learning_Rate=None, N_Bootstrap=1, LR_actor=1e-4, LR_critic=1e-3, gamma=0.99, theta=.2, sigma=1. ):
+    def __init__(self, state_size, action_size, random_seed, Batch_size=None, Learning_Rate=None, N_Bootstrap=1, LR_actor=1e-4, LR_critic=1e-3, gamma=0.99, theta=.2, sigma=1., prio_exponent = 0, prio_beta = 0, prio_epsilon = .001 ):
         """Initialize an Agent object.
         
         Params
@@ -50,46 +49,36 @@ class Agent():
         self.Batch_size = Batch_size
 
         # Replay memory
-        #self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, random_seed)
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, gamma, random_seed, N_Bootstrap)
+        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, self.Batch_size, gamma, random_seed, N_Bootstrap, prio_exponent , prio_beta, prio_epsilon)
         self.t_step = 0
         self.Learning_Rate = Learning_Rate
         self.N_Bootstrap = N_Bootstrap
 
         self.gamma = gamma
+        self.N_train = 6
 
 
 
     def step(self, state, action, reward, next_state, done):
-        """Save experience in replay memory, and use random sample from buffer to learn."""
-        # Save experience / reward
-
+        """Save experience, priorizatoin in replay memory, and use random sample from buffer to learn."""
         self.t_step = (self.t_step+1) % self.Learning_Rate
-        next_state = torch.FloatTensor([next_state])# torch.from_numpy(np.asarray(next_state)).float().to(device)
-        state = torch.FloatTensor([state])#   torch.from_numpy(np.asarray(state)).float().to(device)
-        action = torch.FloatTensor([action])   #torch.from_numpy(np.asarray(action)).float().to(device)
+        next_state = torch.FloatTensor([next_state])
+        state = torch.FloatTensor([state])
+        action = torch.FloatTensor([action])
         action_next = self.actor_target(next_state)
+        # calculate priorization
         Q_target_next = self.critic_target(next_state, action_next)
         Q_target = reward + (self.gamma * Q_target_next.cpu().data.numpy()*(1 - done))
         Q_expected = self.critic_local(state, action).cpu().data.numpy()
         self.memory.add(state, action, reward, next_state, done, np.abs(Q_target - Q_expected)[0][0], BUFFER_SIZE)
-        #print(np.abs(Q_target - Q_expected)[0][0])
-        #if (max(np.abs(Q_target - Q_expected)[0][0])>1):
-        #    print (Q_target)
-        #    print (Q_expected)
-        #if (reward > 0):
-        #    print (self.t_step)
-        #    print (reward)
-        #    print (np.abs(Q_target - Q_expected)[0][0])
-        #    print (self.memory.prios[-1])
-        #    print ("next")
-        if self.t_step == 0:
-            if len(self.memory) > self.Batch_size:
+        if (self.t_step == 0) and (len(self.memory) > self.Batch_size):
+            for _ in range(self.N_train):
                 if self.N_Bootstrap < 2:
                     experiences, indices, is_weights = self.memory.sample()
                 else:
-                    experiences, indices, is_weights = self.memory.sample_bootstrap(self.N_Bootstrap)
+                    experiences, indices, is_weights = self.memory.sample_bootstrap()
                 self.learn(experiences, indices, is_weights)
+
 
     def act(self, state, reduction=1., add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -99,9 +88,9 @@ class Agent():
             action = self.actor_local(state).cpu().data.numpy()
         self.actor_local.train()
         if add_noise:
-            noise = self.noise.sample(reduction)
-            action += noise
-        return action# np.clip(action, -1, 1)
+            noise = self.noise.sample()
+            action += noise*reduction
+        return np.clip(action, -1, 1)
 
     def reset(self):
         self.noise.reset()
@@ -119,42 +108,25 @@ class Agent():
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
-
         # ---------------------------- update critic ---------------------------- #
         # Get predicted next-state actions and Q values from target models
         actions_next = self.actor_target(next_states)
         Q_targets_next = self.critic_target(next_states, actions_next)
         # Compute Q targets for current states (y_i)
-
         Q_targets = rewards + (self.gamma * Q_targets_next *(1 - dones))#
         # Compute critic loss
         Q_expected = self.critic_local(states, actions)
-        # update prios
-
-
+        # update prios in prio_memory
         new_deltas = np.abs(Q_targets.cpu().data.numpy() - Q_expected.cpu().data.numpy())
-        #if(len(rewards.cpu().data.numpy()[rewards.cpu().data.numpy()>0])):
-        #    index = np.where(rewards.cpu().data.numpy()>0)[0][0]
-        #    print ("Hohohohohhohhoh")
-        #    print(Q_targets.cpu().data.numpy()[index])
-        #    print(Q_expected.cpu().data.numpy()[index])
-        #    print (new_deltas[index, 0])
         self.memory.update_prios(indices, new_deltas[:, 0])
-        #if(len(rewards.cpu().data.numpy()[rewards.cpu().data.numpy()>0])):
-        #    print (self.memory.prios[indices[index]])
-        #    print ("next")
-
         critic_loss = (torch.FloatTensor(is_weights) * F.mse_loss(Q_expected, Q_targets)).mean()
-        # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
         # ---------------------------- update actor ---------------------------- #
-        # Compute actor loss
         actions_pred = self.actor_local(states)
         actor_loss = -self.critic_local(states, actions_pred).mean()
-        # Minimize the loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
@@ -178,8 +150,7 @@ class Agent():
 
 class OUNoise:
     """Ornstein-Uhlenbeck process."""
-
-    def __init__(self, size, seed, mu=0., theta=0.15, sigma=3.0):# theta=0.15, sigma=0.2):
+    def __init__(self, size, seed, mu=0., theta=0.15, sigma=.2):
         """Initialize parameters and noise process."""
         self.mu = mu * np.ones(size)
         self.theta = theta
@@ -191,10 +162,10 @@ class OUNoise:
         """Reset the internal state (= noise) to mean (mu)."""
         self.state = copy.copy(self.mu)
 
-    def sample(self, reduction):
+    def sample(self):
         """Update internal state and return it as a noise sample."""
         x = self.state
         dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for i in range(len(x))])
-        self.state = x + reduction*dx
-        return self.state
+        self.state = x + dx
+        return self.state*0.2
 
