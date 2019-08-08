@@ -36,8 +36,8 @@ In this implementation each agent is modelled seperately with a DDPG agent objec
 Hence, each agent only considers its own state and action space. This is sufficient knowledge for the collaboration scenario. To train a competing agent it is benificial to know the opponent's strategy. 
 Hence, this implementation is optimized to solve the environment by cooperation. 
 
-Still, training the agent with two standard DDPG agents does not quite work well. The reason is that (even for humans) it is quite difficult to hit the ball correctly. Hence, very few positive cases emerge and there is nothing the agent can learn from. 
-Bootstrapping as well as priorized replay are methods which optimize the usage of positive experiences, which shall be explained in the following.
+Still, training the agent with standard DDPG agents does not quite work well. The reason is that (even for humans) it is quite difficult to hit the ball correctly. Hence, very few positive cases emerge and there is nothing the agent can learn from. 
+Bootstrapping as well as priorized replay are methods which optimize the usage of positive experiences which is be explained in the following.
 
 ### Bootstrapping and priorized replay
   
@@ -71,7 +71,12 @@ Here is the result plot for the given parameters with seed = 0:
 ![Trained Agent](Result.png)
 
 
+### Future Work
 
+As described above, the environment is solved for the collaborative scenario. It would be interesting to solve it as well for the competetive scenario. To this end, not much change is needed:
+- The rewards have to be adapted such that each agent obtains positive feedback when the other fails.
+- Information of the opposing agent's state, actions and strategies is useful to optimize the agent's strategy.
+One possible solution could be MADDPG (Multi-Agent DDPG). In this case, one single agent conditions its policies on the policies,actions and states of each agent. 
 
 
 
