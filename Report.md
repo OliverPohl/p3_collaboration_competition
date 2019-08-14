@@ -1,3 +1,9 @@
+
+[//]: # (Image References)
+
+[image1]:https://user-images.githubusercontent.com/10624937/42135623-e770e354-7d12-11e8-998d-29fc74429ca2.gif
+
+
 # Report of Deep reinforcement learning: Solving the UnityEnvironment Tennis
 
 ### Introduction
@@ -8,6 +14,7 @@ For this project, the [Tennis](https://github.com/Unity-Technologies/ml-agents/b
 It is solved by the DDPG algorithm enhanced by bootstrap and priorized replay methods. This way the environment is solved in less than 200 episodes. Note, that the algorithm is optimized to solve the environment in the collaboration scenario.
 The algorithm shall be explained in the following.
 
+![Trained Agent][image1]
 
 ### Environment
 In this environment, two agents control rackets to bounce a ball over a net. If an agent hits the ball over the net, it receives a reward of +0.1.  If an agent lets a ball hit the ground or hits the ball out of bounds, it receives a reward of -0.01.  Thus, the goal of each agent is to keep the ball in play.
